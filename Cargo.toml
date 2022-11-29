@@ -1,0 +1,15 @@
+[package]
+name = "midi"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hyper = { version = "0.14.23", features = ["full"] }
+midir = "0.8.0"
+midly = "0.5.2"
+palette = "0.6.1"
+tokio = { version = "1.21.2", features = ["full"] }
+tokio-tungstenite = { version = "0.17.2", features = ["native-tls"] }
+tungstenite = "0.17.3"
