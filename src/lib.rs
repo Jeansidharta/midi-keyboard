@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use midir::MidiInput;
 use midly::{
     live::{LiveEvent, SystemRealtime},
@@ -6,7 +7,7 @@ use midly::{
 use service::lamps;
 use std::sync::mpsc;
 use std::thread;
-pub use tungstenite::{connect, Message};
+pub use tokio_tungstenite::{connect_async, tungstenite::Message};
 use utils::note_name::NoteName;
 
 mod constants;
@@ -126,29 +127,29 @@ fn read_midi_message(
     Ok(())
 }
 
-fn run_websocket(rx: mpsc::Receiver<String>) -> Result<(), &'static str> {
+async fn run_websocket(rx: mpsc::Receiver<String>) -> Result<(), &'static str> {
     loop {
         const URL: &str = "ws://casa.sidharta.xyz/api/lamp/websocket";
-        let (mut websocket, _) = connect(URL).or(Err("Failed to connect"))?;
+        println!("Trying to connect...");
+        let (mut websocket, _) = match connect_async(URL).await {
+            Err(_) => {
+                println!("Could not connect to websocket. Retrying in 5 seconds");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                continue;
+            }
+            Ok(websocket) => websocket,
+        };
+
+        let (write, read) = websocket.split();
 
         for message in rx.iter() {
-            while !websocket.can_write() {
-                println!("Webosocket server has disconnected. Reconnecting...");
-                websocket
-                    .close(None)
-                    .unwrap_or_else(|err| println!("Could not close the websocket: {}", err));
-                break;
-            }
-
             match &message[..] {
                 "PING" => {
                     println!("Ping!");
-                    websocket
-                        .write_message(Message::Ping(Vec::new()))
-                        .or_else(|err| {
-                            println!("Failed to Ping: {}", err);
-                            Err("Failed to Ping")
-                        })?;
+                    write.write(Message::Ping(Vec::new())).or_else(|err| {
+                        println!("Failed to Ping: {}", err);
+                        Err("Failed to Ping")
+                    })?;
                 }
                 _ => {
                     websocket
@@ -216,10 +217,16 @@ pub async fn main() -> Result<(), &'static str> {
     let (tx, rx) = mpsc::sync_channel::<String>(100);
 
     let websocket_handle = thread::spawn(move || {
-        match run_websocket(rx) {
-            Ok(()) => {}
-            Err(err) => println!("Error: {}", err),
-        };
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                match run_websocket(rx).await {
+                    Ok(()) => {}
+                    Err(err) => println!("Error: {}", err),
+                };
+            });
     });
 
     let midi_reader_handle = {
